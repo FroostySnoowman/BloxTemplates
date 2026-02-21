@@ -10,11 +10,10 @@ with open("config.yml", "r") as file:
     data = yaml.safe_load(file)
 
 guild_id = data["General"]["GUILD_ID"]
-
-SPAM_WINDOW_SECONDS = 8
-SPAM_MAX_MESSAGES = 5
-REPEAT_WINDOW_SECONDS = 15
-REPEAT_MAX_MESSAGES = 3
+spam_window_seconds = data["Messages"]["SPAM_WINDOW_SECONDS"]
+spam_max_messages = data["Messages"]["SPAM_MAX_MESSAGES"]
+repeat_window_seconds = data["Messages"]["REPEAT_WINDOW_SECONDS"]
+repeat_max_messages = data["Messages"]["REPEAT_MAX_MESSAGES"]
 
 DISCORD_LINK_RE = re.compile(
     r"(?:https?://)?(?:www\.)?"
@@ -82,9 +81,9 @@ class MessageEventsCog(commands.Cog):
 
         timestamps = self.message_timestamps[user_id]
         timestamps.append(now)
-        while timestamps and now - timestamps[0] > SPAM_WINDOW_SECONDS:
+        while timestamps and now - timestamps[0] > spam_window_seconds:
             timestamps.popleft()
-        if len(timestamps) >= SPAM_MAX_MESSAGES:
+        if len(timestamps) >= spam_max_messages:
             return True
 
         normalized = re.sub(r"\s+", " ", message.content.lower()).strip()
@@ -93,11 +92,11 @@ class MessageEventsCog(commands.Cog):
 
         contents = self.message_contents[user_id]
         contents.append((now, normalized))
-        while contents and now - contents[0][0] > REPEAT_WINDOW_SECONDS:
+        while contents and now - contents[0][0] > repeat_window_seconds:
             contents.popleft()
 
         repeats = sum(1 for _, text in contents if text == normalized)
-        return repeats >= REPEAT_MAX_MESSAGES
+        return repeats >= repeat_max_messages
 
     async def _safe_delete(self, message: discord.Message) -> None:
         try:
