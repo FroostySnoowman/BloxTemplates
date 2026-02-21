@@ -97,7 +97,8 @@ intents = discord.Intents.all()
 initial_extensions = [
                       'cogs.commands.embed',
                       'cogs.commands.misc',
-                      'cogs.commands.verification'
+                      'cogs.commands.verification',
+                      'cogs.events.messageevents'
                       ]
 
 class BloxTemplates(commands.Bot):
