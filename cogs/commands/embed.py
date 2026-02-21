@@ -8,8 +8,7 @@ with open("config.yml", "r") as file:
     data = yaml.safe_load(file)
 
 guild_id = data["General"]["GUILD_ID"]
-default_embed_color = data["General"].get("EMBED_COLOR", "#5865F2")
-
+default_embed_color = data["General"]["EMBED_COLOR"]
 
 def parse_color(color_value: str) -> int | None:
     text = color_value.strip()
@@ -24,22 +23,18 @@ def parse_color(color_value: str) -> int | None:
     except ValueError:
         return None
 
-
 def parse_toggle(value: str) -> bool:
     return value.strip().lower() in {"yes", "y", "true", "1", "on", "inline"}
-
 
 def current_default_color() -> int:
     parsed = parse_color(default_embed_color)
     return parsed if parsed is not None else discord.Color.blurple().value
-
 
 @dataclass
 class EmbedFieldData:
     name: str
     value: str
     inline: bool = False
-
 
 @dataclass
 class EmbedDraft:
@@ -110,7 +105,6 @@ class EmbedDraft:
 
         return payload
 
-
 class SingleValueModal(discord.ui.Modal):
     def __init__(
         self,
@@ -149,18 +143,14 @@ class SingleValueModal(discord.ui.Modal):
             else:
                 parsed = parse_color(raw_value)
                 if parsed is None:
-                    await interaction.response.send_message(
-                        "Invalid color. Use hex like `#5865F2`.",
-                        ephemeral=True,
-                    )
+                    await interaction.response.send_message("Invalid color. Use hex like `#5865F2`.", ephemeral=True)
                     return
                 self.builder.draft.color = parsed
         else:
             setattr(self.builder.draft, self.success_label, raw_value)
 
-        await interaction.response.send_message("Updated.", ephemeral=True)
+        await interaction.response.defer()
         await self.builder.refresh_message()
-
 
 class FieldSlotModal(discord.ui.Modal):
     def __init__(self, builder: "EmbedBuilderView", index: int):
@@ -201,39 +191,29 @@ class FieldSlotModal(discord.ui.Modal):
         if not name and not value:
             if self.index < len(fields):
                 fields.pop(self.index)
-            await interaction.response.send_message("Field cleared.", ephemeral=True)
+            await interaction.response.defer()
             await self.builder.refresh_message()
             return
 
         if not name or not value:
-            await interaction.response.send_message(
-                "Both field name and field value are required.",
-                ephemeral=True,
-            )
+            await interaction.response.send_message("Both field name and field value are required.", ephemeral=True)
             return
 
         if self.index > len(fields):
-            await interaction.response.send_message(
-                f"Fill Field {len(fields) + 1} first.",
-                ephemeral=True,
-            )
+            await interaction.response.send_message(f"Fill Field {len(fields) + 1} first.", ephemeral=True)
             return
 
         field_data = EmbedFieldData(name=name, value=value, inline=inline)
         if self.index == len(fields):
             if len(fields) >= 25:
-                await interaction.response.send_message(
-                    "Discord only allows 25 embed fields.",
-                    ephemeral=True,
-                )
+                await interaction.response.send_message("Discord only allows 25 embed fields.", ephemeral=True)
                 return
             fields.append(field_data)
         else:
             fields[self.index] = field_data
 
-        await interaction.response.send_message("Field updated.", ephemeral=True)
+        await interaction.response.defer()
         await self.builder.refresh_message()
-
 
 class BulkFieldsModal(discord.ui.Modal, title="Bulk Edit Fields"):
     def __init__(self, builder: "EmbedBuilderView"):
@@ -265,28 +245,21 @@ class BulkFieldsModal(discord.ui.Modal, title="Bulk Edit Fields"):
         for raw_line in raw_lines:
             parts = [part.strip() for part in raw_line.split("|")]
             if len(parts) < 2:
-                await interaction.response.send_message(
-                    f"Invalid line: `{raw_line}`. Use `name | value | inline`.",
-                    ephemeral=True,
-                )
+                await interaction.response.send_message(f"Invalid line: `{raw_line}`. Use `name | value | inline`.", ephemeral=True)
                 return
 
             name = parts[0]
             value = parts[1]
             inline = parse_toggle(parts[2]) if len(parts) >= 3 else False
             if not name or not value:
-                await interaction.response.send_message(
-                    f"Invalid line: `{raw_line}`. Name and value are required.",
-                    ephemeral=True,
-                )
+                await interaction.response.send_message(f"Invalid line: `{raw_line}`. Name and value are required.", ephemeral=True)
                 return
 
             parsed_fields.append(EmbedFieldData(name=name, value=value, inline=inline))
 
         self.builder.draft.fields = parsed_fields
-        await interaction.response.send_message("Fields updated.", ephemeral=True)
+        await interaction.response.defer()
         await self.builder.refresh_message()
-
 
 class SubmitChannelSelect(discord.ui.ChannelSelect):
     def __init__(self):
@@ -305,7 +278,6 @@ class SubmitChannelSelect(discord.ui.ChannelSelect):
             return
         await view.submit_to_channel(interaction, self.values[0])
 
-
 class ActionButton(discord.ui.Button):
     def __init__(self, action: str, label: str, style: discord.ButtonStyle, row: int):
         super().__init__(label=label, style=style, row=row)
@@ -317,7 +289,6 @@ class ActionButton(discord.ui.Button):
             await interaction.response.send_message("Builder state not found.", ephemeral=True)
             return
         await view.handle_action(interaction, self.action)
-
 
 class EmbedBuilderView(discord.ui.View):
     def __init__(self, author_id: int):
@@ -365,17 +336,14 @@ class EmbedBuilderView(discord.ui.View):
             return
 
         await self.message.edit(
-            content=None,
+            content=self.draft.content or None,
             embed=self.preview_embed(),
             view=self,
         )
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.author_id:
-            await interaction.response.send_message(
-                "Only the command user can edit this builder.",
-                ephemeral=True,
-            )
+            await interaction.response.send_message("Only the command user can edit this builder.", ephemeral=True)
             return False
         return True
 
@@ -392,10 +360,7 @@ class EmbedBuilderView(discord.ui.View):
 
         if action == "toggle_timestamp":
             self.draft.timestamp = not self.draft.timestamp
-            await interaction.response.send_message(
-                f"Timestamp {'enabled' if self.draft.timestamp else 'disabled'}.",
-                ephemeral=True,
-            )
+            await interaction.response.defer()
             await self.refresh_message()
             return
 
@@ -513,10 +478,7 @@ class EmbedBuilderView(discord.ui.View):
 
         payload = self.draft.send_payload()
         if not payload:
-            await interaction.response.send_message(
-                "This embed is empty. Add content or embed data first.",
-                ephemeral=True,
-            )
+            await interaction.response.send_message("This embed is empty. Add content or embed data first.", ephemeral=True)
             return
 
         bot_member = interaction.guild.me if interaction.guild else None
@@ -526,34 +488,24 @@ class EmbedBuilderView(discord.ui.View):
 
         perms = channel.permissions_for(bot_member)
         if not perms.send_messages:
-            await interaction.response.send_message(
-                f"I can't send messages in {channel.mention}.",
-                ephemeral=True,
-            )
+            await interaction.response.send_message(f"I can't send messages in {channel.mention}.", ephemeral=True)
             return
         if "embed" in payload and not perms.embed_links:
-            await interaction.response.send_message(
-                f"I need `Embed Links` permission in {channel.mention}.",
-                ephemeral=True,
-            )
+            await interaction.response.send_message(f"I need `Embed Links` permission in {channel.mention}.", ephemeral=True)
             return
 
         try:
             await channel.send(**payload)
         except discord.HTTPException as exc:
-            await interaction.response.send_message(
-                f"Failed to send embed: `{exc}`",
-                ephemeral=True,
-            )
+            await interaction.response.send_message(f"Failed to send embed: `{exc}`", ephemeral=True)
             return
 
         for item in self.children:
             item.disabled = True
 
-        await interaction.response.send_message(f"Embed sent to {channel.mention}.", ephemeral=True)
+        await interaction.response.defer()
         await self.refresh_message()
         self.stop()
-
 
 class EmbedCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
@@ -567,13 +519,8 @@ class EmbedCog(commands.Cog):
             return
 
         builder = EmbedBuilderView(author_id=interaction.user.id)
-        await interaction.response.send_message(
-            embed=builder.preview_embed(),
-            view=builder,
-            ephemeral=True,
-        )
+        await interaction.response.send_message(embed=builder.preview_embed(), view=builder, ephemeral=True)
         builder.message = await interaction.original_response()
-
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(EmbedCog(bot), guilds=[discord.Object(id=guild_id)])
