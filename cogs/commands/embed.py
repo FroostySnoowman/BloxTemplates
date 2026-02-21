@@ -12,21 +12,21 @@ default_embed_color = data["General"].get("EMBED_COLOR", "#5865F2")
 
 
 def parse_color(color_value: str) -> int | None:
-    color_value = color_value.strip()
-    if not color_value:
+    text = color_value.strip()
+    if not text:
         return None
 
-    if color_value.startswith("0x"):
-        color_value = f"#{color_value[2:]}"
+    if text.startswith("0x"):
+        text = f"#{text[2:]}"
 
     try:
-        return discord.Color.from_str(color_value).value
+        return discord.Color.from_str(text).value
     except ValueError:
         return None
 
 
-def parse_timestamp(value: str) -> bool:
-    return value.strip().lower() in {"yes", "y", "true", "1", "on"}
+def parse_toggle(value: str) -> bool:
+    return value.strip().lower() in {"yes", "y", "true", "1", "on", "inline"}
 
 
 def current_default_color() -> int:
@@ -72,7 +72,10 @@ class EmbedDraft:
             )
         )
 
-    def to_embed(self) -> discord.Embed:
+    def build_embed(self) -> discord.Embed | None:
+        if not self.has_embed_payload():
+            return None
+
         embed = discord.Embed(
             title=self.title or None,
             description=self.description or None,
@@ -96,154 +99,143 @@ class EmbedDraft:
 
         return embed
 
+    def send_payload(self) -> dict:
+        payload = {}
+        if self.content:
+            payload["content"] = self.content
 
-class BasicEmbedModal(discord.ui.Modal, title="Edit Basic Embed"):
-    def __init__(self, builder: "EmbedBuilderView"):
-        super().__init__()
+        embed = self.build_embed()
+        if embed is not None:
+            payload["embed"] = embed
+
+        return payload
+
+
+class SingleValueModal(discord.ui.Modal):
+    def __init__(
+        self,
+        builder: "EmbedBuilderView",
+        *,
+        title: str,
+        field_label: str,
+        current_value: str,
+        success_label: str,
+        max_length: int,
+        text_style: discord.TextStyle = discord.TextStyle.short,
+        placeholder: str = "",
+        color_mode: bool = False,
+    ):
+        super().__init__(title=title)
         self.builder = builder
+        self.success_label = success_label
+        self.color_mode = color_mode
 
-        self.content = discord.ui.TextInput(
-            label="Message Content (outside embed)",
-            default=builder.draft.content,
+        self.input_value = discord.ui.TextInput(
+            label=field_label,
+            default=current_value,
             required=False,
-            max_length=2000,
-            style=discord.TextStyle.paragraph,
+            max_length=max_length,
+            style=text_style,
+            placeholder=placeholder,
         )
-        self.title_text = discord.ui.TextInput(
-            label="Embed Title",
-            default=builder.draft.title,
+        self.add_item(self.input_value)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        raw_value = self.input_value.value.strip()
+
+        if self.color_mode:
+            if not raw_value:
+                self.builder.draft.color = current_default_color()
+            else:
+                parsed = parse_color(raw_value)
+                if parsed is None:
+                    await interaction.response.send_message(
+                        "Invalid color. Use hex like `#5865F2`.",
+                        ephemeral=True,
+                    )
+                    return
+                self.builder.draft.color = parsed
+        else:
+            setattr(self.builder.draft, self.success_label, raw_value)
+
+        await interaction.response.send_message("Updated.", ephemeral=True)
+        await self.builder.refresh_message()
+
+
+class FieldSlotModal(discord.ui.Modal):
+    def __init__(self, builder: "EmbedBuilderView", index: int):
+        super().__init__(title=f"Edit Field {index + 1}")
+        self.builder = builder
+        self.index = index
+
+        existing = builder.draft.fields[index] if index < len(builder.draft.fields) else None
+        self.field_name = discord.ui.TextInput(
+            label="Field Name",
+            default=existing.name if existing else "",
             required=False,
             max_length=256,
         )
-        self.description = discord.ui.TextInput(
-            label="Embed Description",
-            default=builder.draft.description,
+        self.field_value = discord.ui.TextInput(
+            label="Field Value",
+            default=existing.value if existing else "",
             required=False,
-            max_length=4000,
+            max_length=1024,
             style=discord.TextStyle.paragraph,
         )
-        self.color = discord.ui.TextInput(
-            label="Embed Color (#5865F2)",
-            default=f"#{builder.draft.color:06x}",
+        self.field_inline = discord.ui.TextInput(
+            label="Inline? (yes/no)",
+            default="yes" if existing and existing.inline else "no",
             required=False,
             max_length=16,
         )
-        self.url = discord.ui.TextInput(
-            label="Embed URL",
-            default=builder.draft.url,
-            required=False,
-            max_length=1024,
-        )
-
-        self.add_item(self.content)
-        self.add_item(self.title_text)
-        self.add_item(self.description)
-        self.add_item(self.color)
-        self.add_item(self.url)
+        self.add_item(self.field_name)
+        self.add_item(self.field_value)
+        self.add_item(self.field_inline)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        if self.color.value.strip():
-            parsed = parse_color(self.color.value)
-            if parsed is None:
+        name = self.field_name.value.strip()
+        value = self.field_value.value.strip()
+        inline = parse_toggle(self.field_inline.value)
+        fields = self.builder.draft.fields
+
+        if not name and not value:
+            if self.index < len(fields):
+                fields.pop(self.index)
+            await interaction.response.send_message("Field cleared.", ephemeral=True)
+            await self.builder.refresh_message()
+            return
+
+        if not name or not value:
+            await interaction.response.send_message(
+                "Both field name and field value are required.",
+                ephemeral=True,
+            )
+            return
+
+        if self.index > len(fields):
+            await interaction.response.send_message(
+                f"Fill Field {len(fields) + 1} first.",
+                ephemeral=True,
+            )
+            return
+
+        field_data = EmbedFieldData(name=name, value=value, inline=inline)
+        if self.index == len(fields):
+            if len(fields) >= 25:
                 await interaction.response.send_message(
-                    "Invalid color. Use a hex color like `#5865F2`.",
+                    "Discord only allows 25 embed fields.",
                     ephemeral=True,
                 )
                 return
-            self.builder.draft.color = parsed
+            fields.append(field_data)
+        else:
+            fields[self.index] = field_data
 
-        self.builder.draft.content = self.content.value.strip()
-        self.builder.draft.title = self.title_text.value.strip()
-        self.builder.draft.description = self.description.value.strip()
-        self.builder.draft.url = self.url.value.strip()
-
-        await interaction.response.send_message("Updated basic embed settings.", ephemeral=True)
+        await interaction.response.send_message("Field updated.", ephemeral=True)
         await self.builder.refresh_message()
 
 
-class MediaEmbedModal(discord.ui.Modal, title="Edit Embed Media"):
-    def __init__(self, builder: "EmbedBuilderView"):
-        super().__init__()
-        self.builder = builder
-
-        self.thumbnail_url = discord.ui.TextInput(
-            label="Thumbnail URL",
-            default=builder.draft.thumbnail_url,
-            required=False,
-            max_length=1024,
-        )
-        self.image_url = discord.ui.TextInput(
-            label="Image URL",
-            default=builder.draft.image_url,
-            required=False,
-            max_length=1024,
-        )
-
-        self.add_item(self.thumbnail_url)
-        self.add_item(self.image_url)
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        self.builder.draft.thumbnail_url = self.thumbnail_url.value.strip()
-        self.builder.draft.image_url = self.image_url.value.strip()
-
-        await interaction.response.send_message("Updated embed media settings.", ephemeral=True)
-        await self.builder.refresh_message()
-
-
-class MetaEmbedModal(discord.ui.Modal, title="Edit Embed Meta"):
-    def __init__(self, builder: "EmbedBuilderView"):
-        super().__init__()
-        self.builder = builder
-
-        self.author_name = discord.ui.TextInput(
-            label="Author Name",
-            default=builder.draft.author_name,
-            required=False,
-            max_length=256,
-        )
-        self.author_icon_url = discord.ui.TextInput(
-            label="Author Icon URL",
-            default=builder.draft.author_icon_url,
-            required=False,
-            max_length=1024,
-        )
-        self.footer_text = discord.ui.TextInput(
-            label="Footer Text",
-            default=builder.draft.footer_text,
-            required=False,
-            max_length=2048,
-        )
-        self.footer_icon_url = discord.ui.TextInput(
-            label="Footer Icon URL",
-            default=builder.draft.footer_icon_url,
-            required=False,
-            max_length=1024,
-        )
-        self.timestamp = discord.ui.TextInput(
-            label="Timestamp? (yes/no)",
-            default="yes" if builder.draft.timestamp else "no",
-            required=False,
-            max_length=16,
-        )
-
-        self.add_item(self.author_name)
-        self.add_item(self.author_icon_url)
-        self.add_item(self.footer_text)
-        self.add_item(self.footer_icon_url)
-        self.add_item(self.timestamp)
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        self.builder.draft.author_name = self.author_name.value.strip()
-        self.builder.draft.author_icon_url = self.author_icon_url.value.strip()
-        self.builder.draft.footer_text = self.footer_text.value.strip()
-        self.builder.draft.footer_icon_url = self.footer_icon_url.value.strip()
-        self.builder.draft.timestamp = parse_timestamp(self.timestamp.value)
-
-        await interaction.response.send_message("Updated embed metadata.", ephemeral=True)
-        await self.builder.refresh_message()
-
-
-class FieldsEmbedModal(discord.ui.Modal, title="Edit Embed Fields"):
+class BulkFieldsModal(discord.ui.Modal, title="Bulk Edit Fields"):
     def __init__(self, builder: "EmbedBuilderView"):
         super().__init__()
         self.builder = builder
@@ -253,8 +245,8 @@ class FieldsEmbedModal(discord.ui.Modal, title="Edit Embed Fields"):
             for entry in builder.draft.fields
         )
         self.fields_input = discord.ui.TextInput(
-            label="One per line: name | value | inline",
-            placeholder="Example: Rules | No spam links | yes",
+            label="name | value | inline (one per line)",
+            placeholder="Rules | No spam links | yes",
             default=default_fields[:4000] if default_fields else None,
             required=False,
             max_length=4000,
@@ -274,17 +266,17 @@ class FieldsEmbedModal(discord.ui.Modal, title="Edit Embed Fields"):
             parts = [part.strip() for part in raw_line.split("|")]
             if len(parts) < 2:
                 await interaction.response.send_message(
-                    f"Invalid field line: `{raw_line}`. Use `name | value | inline`.",
+                    f"Invalid line: `{raw_line}`. Use `name | value | inline`.",
                     ephemeral=True,
                 )
                 return
 
-            inline = parse_timestamp(parts[2]) if len(parts) >= 3 else False
             name = parts[0]
             value = parts[1]
+            inline = parse_toggle(parts[2]) if len(parts) >= 3 else False
             if not name or not value:
                 await interaction.response.send_message(
-                    f"Invalid field line: `{raw_line}`. Name and value are required.",
+                    f"Invalid line: `{raw_line}`. Name and value are required.",
                     ephemeral=True,
                 )
                 return
@@ -292,45 +284,114 @@ class FieldsEmbedModal(discord.ui.Modal, title="Edit Embed Fields"):
             parsed_fields.append(EmbedFieldData(name=name, value=value, inline=inline))
 
         self.builder.draft.fields = parsed_fields
-        await interaction.response.send_message("Updated embed fields.", ephemeral=True)
+        await interaction.response.send_message("Fields updated.", ephemeral=True)
         await self.builder.refresh_message()
 
 
+class SubmitChannelSelect(discord.ui.ChannelSelect):
+    def __init__(self):
+        super().__init__(
+            placeholder="Select a channel to submit/send this embed",
+            channel_types=[discord.ChannelType.text, discord.ChannelType.news],
+            min_values=1,
+            max_values=1,
+            row=0,
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        view = self.view
+        if not isinstance(view, EmbedBuilderView):
+            await interaction.response.send_message("Builder state not found.", ephemeral=True)
+            return
+        await view.submit_to_channel(interaction, self.values[0])
+
+
+class ActionButton(discord.ui.Button):
+    def __init__(self, action: str, label: str, style: discord.ButtonStyle, row: int):
+        super().__init__(label=label, style=style, row=row)
+        self.action = action
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        view = self.view
+        if not isinstance(view, EmbedBuilderView):
+            await interaction.response.send_message("Builder state not found.", ephemeral=True)
+            return
+        await view.handle_action(interaction, self.action)
+
+
 class EmbedBuilderView(discord.ui.View):
-    def __init__(self, author_id: int, target_channel: discord.TextChannel):
+    def __init__(self, author_id: int):
         super().__init__(timeout=900)
         self.author_id = author_id
-        self.target_channel = target_channel
         self.draft = EmbedDraft()
         self.message: discord.Message | None = None
+        self.submitted_to: str = "Not submitted yet"
 
-    def builder_text(self) -> str:
-        summary = [
-            "**Embed Builder**",
-            f"Target channel: {self.target_channel.mention}",
-            f"Content: {'set' if self.draft.content else 'empty'}",
-            f"Title: {'set' if self.draft.title else 'empty'}",
-            f"Description: {'set' if self.draft.description else 'empty'}",
-            f"Author: {'set' if self.draft.author_name else 'empty'}",
-            f"Footer: {'set' if self.draft.footer_text else 'empty'}",
-            f"Image: {'set' if self.draft.image_url else 'empty'}",
-            f"Thumbnail: {'set' if self.draft.thumbnail_url else 'empty'}",
-            f"Fields: {len(self.draft.fields)}",
-            f"Timestamp: {'on' if self.draft.timestamp else 'off'}",
-            f"Color: `#{self.draft.color:06x}`",
-            "",
-            "Use buttons to edit. `Preview` checks it first and `Send` posts it.",
+        self.add_item(SubmitChannelSelect())
+
+        layout = [
+            ("content", "Content", discord.ButtonStyle.primary, 1),
+            ("title", "Title", discord.ButtonStyle.primary, 1),
+            ("description", "Description", discord.ButtonStyle.primary, 1),
+            ("url", "URL", discord.ButtonStyle.primary, 1),
+            ("color", "Color", discord.ButtonStyle.primary, 1),
+            ("author_name", "Author Name", discord.ButtonStyle.secondary, 2),
+            ("author_icon_url", "Author Icon", discord.ButtonStyle.secondary, 2),
+            ("footer_text", "Footer Text", discord.ButtonStyle.secondary, 2),
+            ("footer_icon_url", "Footer Icon", discord.ButtonStyle.secondary, 2),
+            ("thumbnail_url", "Thumbnail", discord.ButtonStyle.secondary, 2),
+            ("image_url", "Image", discord.ButtonStyle.secondary, 3),
+            ("toggle_timestamp", "Timestamp", discord.ButtonStyle.secondary, 3),
+            ("fields_bulk", "Fields Bulk", discord.ButtonStyle.secondary, 3),
+            ("field_1", "Field 1", discord.ButtonStyle.success, 3),
+            ("field_2", "Field 2", discord.ButtonStyle.success, 3),
+            ("field_3", "Field 3", discord.ButtonStyle.success, 4),
+            ("field_4", "Field 4", discord.ButtonStyle.success, 4),
+            ("field_5", "Field 5", discord.ButtonStyle.success, 4),
+            ("field_6", "Field 6", discord.ButtonStyle.success, 4),
+            ("field_7", "Field 7", discord.ButtonStyle.success, 4),
         ]
-        return "\n".join(summary)
+
+        for action, label, style, row in layout:
+            self.add_item(ActionButton(action=action, label=label, style=style, row=row))
+
+    def status_text(self) -> str:
+        content_preview = self.draft.content if self.draft.content else "empty"
+        if len(content_preview) > 100:
+            content_preview = f"{content_preview[:97]}..."
+
+        return "\n".join(
+            [
+                "**Embed Builder (Live Preview)**",
+                "Use the channel dropdown above the buttons to submit.",
+                f"Submitted: {self.submitted_to}",
+                f"Content preview: {content_preview}",
+                f"Title: {'set' if self.draft.title else 'empty'}",
+                f"Description: {'set' if self.draft.description else 'empty'}",
+                f"Author: {'set' if self.draft.author_name else 'empty'}",
+                f"Footer: {'set' if self.draft.footer_text else 'empty'}",
+                f"Image: {'set' if self.draft.image_url else 'empty'}",
+                f"Thumbnail: {'set' if self.draft.thumbnail_url else 'empty'}",
+                f"Fields: {len(self.draft.fields)} / 25",
+                f"Timestamp: {'on' if self.draft.timestamp else 'off'}",
+                f"Color: `#{self.draft.color:06x}`",
+            ]
+        )
 
     async def refresh_message(self) -> None:
-        if self.message:
-            await self.message.edit(content=self.builder_text(), view=self)
+        if self.message is None:
+            return
+
+        await self.message.edit(
+            content=self.status_text(),
+            embed=self.draft.build_embed(),
+            view=self,
+        )
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.author_id:
             await interaction.response.send_message(
-                "Only the user who started this builder can use it.",
+                "Only the command user can edit this builder.",
                 ephemeral=True,
             )
             return False
@@ -341,56 +402,162 @@ class EmbedBuilderView(discord.ui.View):
             item.disabled = True
         await self.refresh_message()
 
-    @discord.ui.button(label="Basic", style=discord.ButtonStyle.primary, row=0)
-    async def basic(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
-        await interaction.response.send_modal(BasicEmbedModal(self))
+    async def handle_action(self, interaction: discord.Interaction, action: str) -> None:
+        if action.startswith("field_"):
+            field_number = int(action.split("_")[1])
+            await interaction.response.send_modal(FieldSlotModal(self, field_number - 1))
+            return
 
-    @discord.ui.button(label="Media", style=discord.ButtonStyle.secondary, row=0)
-    async def media(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
-        await interaction.response.send_modal(MediaEmbedModal(self))
-
-    @discord.ui.button(label="Meta", style=discord.ButtonStyle.secondary, row=0)
-    async def meta(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
-        await interaction.response.send_modal(MetaEmbedModal(self))
-
-    @discord.ui.button(label="Fields", style=discord.ButtonStyle.secondary, row=0)
-    async def fields(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
-        await interaction.response.send_modal(FieldsEmbedModal(self))
-
-    @discord.ui.button(label="Preview", style=discord.ButtonStyle.success, row=1)
-    async def preview(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
-        if not self.draft.content and not self.draft.has_embed_payload():
+        if action == "toggle_timestamp":
+            self.draft.timestamp = not self.draft.timestamp
             await interaction.response.send_message(
-                "This is currently empty. Add content or embed data first.",
+                f"Timestamp {'enabled' if self.draft.timestamp else 'disabled'}.",
+                ephemeral=True,
+            )
+            await self.refresh_message()
+            return
+
+        if action == "fields_bulk":
+            await interaction.response.send_modal(BulkFieldsModal(self))
+            return
+
+        modal_map = {
+            "content": SingleValueModal(
+                self,
+                title="Edit Message Content",
+                field_label="Content (outside embed)",
+                current_value=self.draft.content,
+                success_label="content",
+                max_length=2000,
+                text_style=discord.TextStyle.paragraph,
+            ),
+            "title": SingleValueModal(
+                self,
+                title="Edit Embed Title",
+                field_label="Title",
+                current_value=self.draft.title,
+                success_label="title",
+                max_length=256,
+            ),
+            "description": SingleValueModal(
+                self,
+                title="Edit Embed Description",
+                field_label="Description",
+                current_value=self.draft.description,
+                success_label="description",
+                max_length=4000,
+                text_style=discord.TextStyle.paragraph,
+            ),
+            "url": SingleValueModal(
+                self,
+                title="Edit Embed URL",
+                field_label="URL",
+                current_value=self.draft.url,
+                success_label="url",
+                max_length=1024,
+                placeholder="https://example.com",
+            ),
+            "color": SingleValueModal(
+                self,
+                title="Edit Embed Color",
+                field_label="Hex Color (blank resets default)",
+                current_value=f"#{self.draft.color:06x}",
+                success_label="color",
+                max_length=16,
+                placeholder="#5865F2",
+                color_mode=True,
+            ),
+            "author_name": SingleValueModal(
+                self,
+                title="Edit Author Name",
+                field_label="Author Name",
+                current_value=self.draft.author_name,
+                success_label="author_name",
+                max_length=256,
+            ),
+            "author_icon_url": SingleValueModal(
+                self,
+                title="Edit Author Icon URL",
+                field_label="Author Icon URL",
+                current_value=self.draft.author_icon_url,
+                success_label="author_icon_url",
+                max_length=1024,
+            ),
+            "footer_text": SingleValueModal(
+                self,
+                title="Edit Footer Text",
+                field_label="Footer Text",
+                current_value=self.draft.footer_text,
+                success_label="footer_text",
+                max_length=2048,
+            ),
+            "footer_icon_url": SingleValueModal(
+                self,
+                title="Edit Footer Icon URL",
+                field_label="Footer Icon URL",
+                current_value=self.draft.footer_icon_url,
+                success_label="footer_icon_url",
+                max_length=1024,
+            ),
+            "thumbnail_url": SingleValueModal(
+                self,
+                title="Edit Thumbnail URL",
+                field_label="Thumbnail URL",
+                current_value=self.draft.thumbnail_url,
+                success_label="thumbnail_url",
+                max_length=1024,
+            ),
+            "image_url": SingleValueModal(
+                self,
+                title="Edit Image URL",
+                field_label="Image URL",
+                current_value=self.draft.image_url,
+                success_label="image_url",
+                max_length=1024,
+            ),
+        }
+
+        modal = modal_map.get(action)
+        if modal is None:
+            await interaction.response.send_message("Unknown editor action.", ephemeral=True)
+            return
+
+        await interaction.response.send_modal(modal)
+
+    async def submit_to_channel(self, interaction: discord.Interaction, channel: discord.abc.GuildChannel) -> None:
+        if not isinstance(channel, discord.TextChannel):
+            await interaction.response.send_message("Please choose a text channel.", ephemeral=True)
+            return
+
+        payload = self.draft.send_payload()
+        if not payload:
+            await interaction.response.send_message(
+                "This embed is empty. Add content or embed data first.",
                 ephemeral=True,
             )
             return
 
-        preview_payload = {}
-        if self.draft.content:
-            preview_payload["content"] = self.draft.content
-        if self.draft.has_embed_payload():
-            preview_payload["embed"] = self.draft.to_embed()
+        bot_member = interaction.guild.me if interaction.guild else None
+        if bot_member is None:
+            await interaction.response.send_message("I could not verify my permissions.", ephemeral=True)
+            return
 
-        await interaction.response.send_message(ephemeral=True, **preview_payload)
-
-    @discord.ui.button(label="Send", style=discord.ButtonStyle.green, row=1)
-    async def send(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
-        if not self.draft.content and not self.draft.has_embed_payload():
+        perms = channel.permissions_for(bot_member)
+        if not perms.send_messages:
             await interaction.response.send_message(
-                "This is currently empty. Add content or embed data first.",
+                f"I can't send messages in {channel.mention}.",
                 ephemeral=True,
             )
             return
-
-        payload = {}
-        if self.draft.content:
-            payload["content"] = self.draft.content
-        if self.draft.has_embed_payload():
-            payload["embed"] = self.draft.to_embed()
+        if "embed" in payload and not perms.embed_links:
+            await interaction.response.send_message(
+                f"I need `Embed Links` permission in {channel.mention}.",
+                ephemeral=True,
+            )
+            return
 
         try:
-            await self.target_channel.send(**payload)
+            await channel.send(**payload)
         except discord.HTTPException as exc:
             await interaction.response.send_message(
                 f"Failed to send embed: `{exc}`",
@@ -398,20 +565,11 @@ class EmbedBuilderView(discord.ui.View):
             )
             return
 
+        self.submitted_to = channel.mention
         for item in self.children:
             item.disabled = True
-        await interaction.response.send_message(
-            f"Embed sent in {self.target_channel.mention}.",
-            ephemeral=True,
-        )
-        await self.refresh_message()
-        self.stop()
 
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger, row=1)
-    async def cancel(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
-        for item in self.children:
-            item.disabled = True
-        await interaction.response.send_message("Embed builder canceled.", ephemeral=True)
+        await interaction.response.send_message(f"Embed sent to {channel.mention}.", ephemeral=True)
         await self.refresh_message()
         self.stop()
 
@@ -420,21 +578,24 @@ class EmbedCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    @app_commands.command(name="embed", description="Build and send a custom embed with a UI editor.")
-    @app_commands.describe(channel="Channel to send the finished embed to")
+    @app_commands.command(name="embed", description="Live embed builder with direct part-by-part buttons.")
     @app_commands.default_permissions(manage_messages=True)
-    async def embed(self, interaction: discord.Interaction, channel: discord.TextChannel | None = None) -> None:
+    async def embed(self, interaction: discord.Interaction) -> None:
         if interaction.guild is None:
             await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
             return
 
-        target_channel = channel or interaction.channel
-        if not isinstance(target_channel, discord.TextChannel):
-            await interaction.response.send_message("Please use this in a text channel.", ephemeral=True)
-            return
+        builder = EmbedBuilderView(author_id=interaction.user.id)
+        response_payload = {
+            "content": builder.status_text(),
+            "view": builder,
+            "ephemeral": True,
+        }
+        preview_embed = builder.draft.build_embed()
+        if preview_embed is not None:
+            response_payload["embed"] = preview_embed
 
-        builder = EmbedBuilderView(author_id=interaction.user.id, target_channel=target_channel)
-        await interaction.response.send_message(builder.builder_text(), view=builder, ephemeral=True)
+        await interaction.response.send_message(**response_payload)
         builder.message = await interaction.original_response()
 
 
