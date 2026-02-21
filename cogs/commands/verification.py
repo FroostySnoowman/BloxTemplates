@@ -36,7 +36,7 @@ class VerificationButton(discord.ui.View):
         embed = discord.Embed(title="Verified", description="You have been verified and given the verified role!", color=discord.Color.green())
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-class MiscUtilsCog(commands.Cog):
+class VerificationCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         self.bot.add_view(VerificationButton())
@@ -49,4 +49,4 @@ class MiscUtilsCog(commands.Cog):
         await interaction.response.send_message("Verification embed sent!", ephemeral=True)
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(MiscUtilsCog(bot), guilds=[discord.Object(id=guild_id)])
+    await bot.add_cog(VerificationCog(bot), guilds=[discord.Object(id=guild_id)])

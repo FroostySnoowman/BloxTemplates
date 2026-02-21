@@ -7,6 +7,7 @@ from discord.ext import commands
 with open('config.yml', 'r') as file:
     data = yaml.safe_load(file)
 
+guild_id = data["General"]["GUILD_ID"]
 embed_color = data["General"]["EMBED_COLOR"]
 activity = data["General"]["ACTIVITY"].lower()
 doing_activity = data["General"]["DOING_ACTIVITY"]
@@ -94,13 +95,14 @@ else:
 intents = discord.Intents.all()
 
 initial_extensions = [
+                      'cogs.commands.embed',
                       'cogs.commands.misc',
+                      'cogs.commands.verification'
                       ]
 
-class KonpekiPoints(commands.Bot):
+class BloxTemplates(commands.Bot):
     def __init__(self):
-        super().__init__(command_prefix=commands.when_mentioned_or('.'), owner_ids=[503641822141349888, 217170672437166082], intents=intents, activity=_activity, status=_status)
-        self.persistent_views_added = False
+        super().__init__(command_prefix=commands.when_mentioned_or('.'), owner_ids=[503641822141349888, 1203858416246988830], intents=intents, activity=_activity, status=_status)
 
     async def on_ready(self):
 
@@ -108,13 +110,14 @@ class KonpekiPoints(commands.Bot):
 
         print('Attempting to sync commands...')
         await self.tree.sync()
+        await self.tree.sync(guild=discord.Object(id=guild_id))
         print('Succesfully synced slash commands!')
 
     async def setup_hook(self):
         for extension in initial_extensions:
             await self.load_extension(extension)
 
-client = KonpekiPoints()
+client = BloxTemplates()
 client.remove_command('help')
 
 @client.event
