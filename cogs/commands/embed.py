@@ -325,7 +325,6 @@ class EmbedBuilderView(discord.ui.View):
         self.author_id = author_id
         self.draft = EmbedDraft()
         self.message: discord.Message | None = None
-        self.submitted_to: str = "Not submitted yet"
 
         self.add_item(SubmitChannelSelect())
 
@@ -355,36 +354,19 @@ class EmbedBuilderView(discord.ui.View):
         for action, label, style, row in layout:
             self.add_item(ActionButton(action=action, label=label, style=style, row=row))
 
-    def status_text(self) -> str:
-        content_preview = self.draft.content if self.draft.content else "empty"
-        if len(content_preview) > 100:
-            content_preview = f"{content_preview[:97]}..."
-
-        return "\n".join(
-            [
-                "**Embed Builder (Live Preview)**",
-                "Use the channel dropdown above the buttons to submit.",
-                f"Submitted: {self.submitted_to}",
-                f"Content preview: {content_preview}",
-                f"Title: {'set' if self.draft.title else 'empty'}",
-                f"Description: {'set' if self.draft.description else 'empty'}",
-                f"Author: {'set' if self.draft.author_name else 'empty'}",
-                f"Footer: {'set' if self.draft.footer_text else 'empty'}",
-                f"Image: {'set' if self.draft.image_url else 'empty'}",
-                f"Thumbnail: {'set' if self.draft.thumbnail_url else 'empty'}",
-                f"Fields: {len(self.draft.fields)} / 25",
-                f"Timestamp: {'on' if self.draft.timestamp else 'off'}",
-                f"Color: `#{self.draft.color:06x}`",
-            ]
-        )
+    def preview_embed(self) -> discord.Embed:
+        embed = self.draft.build_embed()
+        if embed is not None:
+            return embed
+        return discord.Embed(description="\u200b", color=self.draft.color)
 
     async def refresh_message(self) -> None:
         if self.message is None:
             return
 
         await self.message.edit(
-            content=self.status_text(),
-            embed=self.draft.build_embed(),
+            content=None,
+            embed=self.preview_embed(),
             view=self,
         )
 
@@ -565,7 +547,6 @@ class EmbedBuilderView(discord.ui.View):
             )
             return
 
-        self.submitted_to = channel.mention
         for item in self.children:
             item.disabled = True
 
@@ -586,16 +567,11 @@ class EmbedCog(commands.Cog):
             return
 
         builder = EmbedBuilderView(author_id=interaction.user.id)
-        response_payload = {
-            "content": builder.status_text(),
-            "view": builder,
-            "ephemeral": True,
-        }
-        preview_embed = builder.draft.build_embed()
-        if preview_embed is not None:
-            response_payload["embed"] = preview_embed
-
-        await interaction.response.send_message(**response_payload)
+        await interaction.response.send_message(
+            embed=builder.preview_embed(),
+            view=builder,
+            ephemeral=True,
+        )
         builder.message = await interaction.original_response()
 
 
