@@ -6,7 +6,7 @@
 2. Enable "Presence Intent", "Server Members Intent", "Message Content Intent", in "Bot".
 3. Edit profile picture, banner, and name in "Bot" to your desired liking.
 4. Go to "Installation" and change the "Install Link" dropdown to "None".
-5. Go to "OAuth2" and select "bot" and "applications.commands" under the "Scopes" section. Scroll down and select "Administrator" under the "Bot Permissions" section. Scroll down and copy the Generated URL. Paste this in your browser and add the bot to all your desired server(s).
+5. Go to "OAuth2" and select "bot" and "applications.commands" under the "Scopes" section. Scroll down and select "Administrator" under the "Bot Permissions" section. Scroll down and copy the Generated URL. Paste this in your browser and add the bot to your server.
 
 ## Configuration
 0. Rename the `example-config.yml` file to `config.yml`.
