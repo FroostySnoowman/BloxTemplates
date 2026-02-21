@@ -1,0 +1,20 @@
+General:
+    TOKEN: "" # the bot's token
+    ACTIVITY: "watching" # the bot's activity type (playing, streaming, listening, watching)
+    DOING_ACTIVITY: "bloxtemplates.com" # the bot's activity text
+    STREAMING_ACTIVITY_TWITCH_URL: "" # the bot's Twitch URL if using streaming activity
+    STATUS: "online" # the bot's status (online, idle, dnd, invisible)
+    EMBED_COLOR: "#9C27B0" # the default color for embeds (hex code)
+    GUILD_ID: 1234 # the ID of your server (guild)
+
+Verification:
+    VERIFIED_ROLE_ID: 1234 # the ID of the role to give when a user verifies
+
+Messages:
+    SERVER_INVITE_WHITELIST:
+        - 1234 # list of server IDs that are allowed in server invite links
+    
+    SPAM_WINDOW_SECONDS: 8 # the window in seconds for spam detection
+    SPAM_MAX_MESSAGES: 5 # the max number of messages allowed in the spam window
+    REPEAT_WINDOW_SECONDS: 15 # the window in seconds for repeat message detection
+    REPEAT_MAX_MESSAGES: 3 # the max number of times a message can be repeated in the repeat window
