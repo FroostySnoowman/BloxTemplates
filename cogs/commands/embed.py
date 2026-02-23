@@ -3,6 +3,7 @@ import yaml
 from dataclasses import dataclass, field
 from discord import app_commands
 from discord.ext import commands
+from typing import Optional
 
 with open("config.yml", "r") as file:
     data = yaml.safe_load(file)
@@ -10,7 +11,7 @@ with open("config.yml", "r") as file:
 guild_id = data["General"]["GUILD_ID"]
 default_embed_color = data["General"]["EMBED_COLOR"]
 
-def parse_color(color_value: str) -> int | None:
+def parse_color(color_value: str) -> Optional[int]:
     text = color_value.strip()
     if not text:
         return None
@@ -67,7 +68,7 @@ class EmbedDraft:
             )
         )
 
-    def build_embed(self) -> discord.Embed | None:
+    def build_embed(self) -> Optional[discord.Embed]:
         if not self.has_embed_payload():
             return None
 
@@ -295,7 +296,7 @@ class EmbedBuilderView(discord.ui.View):
         super().__init__(timeout=900)
         self.author_id = author_id
         self.draft = EmbedDraft()
-        self.message: discord.Message | None = None
+        self.message: Optional[discord.Message] = None
 
         self.add_item(SubmitChannelSelect())
 
